@@ -1,0 +1,6 @@
+{
+  "name": "Inflow Expense & Warranty Ledger",
+  "description": "Private local-first expense tracker, bill scanner, return window manager, and product warranty ledger with tax deduction reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
