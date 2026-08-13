@@ -137,7 +137,7 @@ Instructions:
     }
   } catch (error: any) {
     console.error("Error scanning receipt:", error);
-    const fallbackData = parseReceiptTextHeuristic(req.body.textInput || "");
+    const fallbackData = parseReceiptTextHeuristic(req.body?.textInput || "");
     return res.json({
       success: true,
       data: fallbackData,

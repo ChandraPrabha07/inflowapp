@@ -19,6 +19,74 @@ import {
 import { Expense, ExpenseCategory, ItemizedDetail, PaymentMethod } from '../types';
 import { INDIAN_VENDOR_PRESETS } from '../data/indianVendors';
 
+// Helper function to compress images client-side before uploading
+const compressImage = (file: File, maxDim = 1200, quality = 0.8): Promise<{ base64: string; mimeType: string }> => {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      // For PDFs or other types, just read as normal base64
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        resolve({
+          base64: event.target?.result as string,
+          mimeType: file.type,
+        });
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve({
+            base64: event.target?.result as string,
+            mimeType: file.type,
+          });
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+        // Output as image/jpeg for standard compression
+        const compressedBase64 = canvas.toDataURL('image/jpeg', quality);
+        resolve({
+          base64: compressedBase64,
+          mimeType: 'image/jpeg',
+        });
+      };
+      img.onerror = () => {
+        resolve({
+          base64: event.target?.result as string,
+          mimeType: file.type,
+        });
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.onerror = (err) => reject(err);
+    reader.readAsDataURL(file);
+  });
+};
+
 interface BillScannerModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -68,16 +136,26 @@ export const BillScannerModal: React.FC<BillScannerModalProps> = ({
     { id: '1', name: 'Product / Item 1', qty: 1, price: 0 },
   ]);
 
-  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setMimeType(file.type || 'image/jpeg');
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const base64 = event.target?.result as string;
+      setScanMessage('Optimizing bill image for AI engine...');
+      try {
+        const { base64, mimeType: compressedMime } = await compressImage(file);
         setSelectedImage(base64);
-      };
-      reader.readAsDataURL(file);
+        setMimeType(compressedMime);
+        setScanMessage('Bill optimized. Click "Scan Bill with AI" to proceed.');
+      } catch (err) {
+        console.error('Image compression failed, using original:', err);
+        setMimeType(file.type || 'image/jpeg');
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const base64 = event.target?.result as string;
+          setSelectedImage(base64);
+          setScanMessage('Loaded raw image. Click "Scan Bill with AI" to proceed.');
+        };
+        reader.readAsDataURL(file);
+      }
     }
   };
 
@@ -112,6 +190,34 @@ export const BillScannerModal: React.FC<BillScannerModalProps> = ({
         }),
       });
 
+      if (!response.ok) {
+        let errorMsg = 'Scan failed.';
+        if (response.status === 413) {
+          errorMsg = 'Bill file is too large for the server. Try a smaller size.';
+        } else if (response.status === 504 || response.status === 502) {
+          errorMsg = 'Scan timed out. Please try again or enter details manually.';
+        } else {
+          try {
+            const errText = await response.text();
+            try {
+              const errJson = JSON.parse(errText);
+              errorMsg = errJson.error || errJson.message || errorMsg;
+            } catch {
+              if (errText.includes('Payload Too Large')) {
+                errorMsg = 'Bill file is too large for the server. Try a smaller size.';
+              } else if (errText.includes('Timeout')) {
+                errorMsg = 'Scan timed out. Please try again or enter details manually.';
+              } else {
+                errorMsg = `Server error (${response.status}). Please try manual entry.`;
+              }
+            }
+          } catch (readErr) {
+            errorMsg = `Server error (${response.status}). Please try manual entry.`;
+          }
+        }
+        throw new Error(errorMsg);
+      }
+
       const resData = await response.json();
 
       if (resData.success && resData.data) {
@@ -143,9 +249,9 @@ export const BillScannerModal: React.FC<BillScannerModalProps> = ({
       } else {
         setScanMessage('Scan completed. Please verify form values.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Scan error:', err);
-      setScanMessage('Scan error occurred. Manual entry active.');
+      setScanMessage(err.message || 'Scan error occurred. Manual entry active.');
     } finally {
       setIsScanning(false);
     }
