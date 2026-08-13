@@ -2,14 +2,21 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
-import { createServer as createViteServer } from "vite";
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: "20mb" }));
+// On Vercel, the request body might already be parsed. 
+// If so, skip express.json() to prevent body-parser from hanging on the consumed stream.
+app.use((req, res, next) => {
+  if (req.body !== undefined) {
+    next();
+  } else {
+    express.json({ limit: "20mb" })(req, res, next);
+  }
+});
 
 // Initialize Gemini client lazily
 let aiClient: GoogleGenAI | null = null;
@@ -190,6 +197,7 @@ function parseReceiptTextHeuristic(text: string) {
 
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
